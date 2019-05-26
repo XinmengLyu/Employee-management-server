@@ -1,0 +1,30 @@
+{
+  "name": "employee-management-server",
+  "version": "1.0.0",
+  "description": "Server side code for employee management app",
+  "main": "index.js",
+  "scripts": {
+    "test": "echo \"Error: no test specified\" && exit 1"
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/XinmengLyu/Employee-management-server.git"
+  },
+  "keywords": [
+    "expressjs",
+    "mongoose",
+    "mongodb",
+    "mongoose-pagenate"
+  ],
+  "author": "Simon Lyu",
+  "license": "ISC",
+  "bugs": {
+    "url": "https://github.com/XinmengLyu/Employee-management-server/issues"
+  },
+  "homepage": "https://github.com/XinmengLyu/Employee-management-server#readme",
+  "dependencies": {
+    "csv-parser": "^2.3.0",
+    "express": "^4.17.0",
+    "mongoose": "^5.5.10"
+  }
+}
