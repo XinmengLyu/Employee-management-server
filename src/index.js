@@ -74,7 +74,14 @@ router.route("/employees?")
             },
             page: page? +page : 1 
         };
-        const query = search? {$text : {$search: new RegExp(search, "i")}} : {};
+        const query = {$or: [
+            {name: new RegExp(search, "i")},
+            {titlle: new RegExp(search, "i")},
+            {office_phone: new RegExp(search, "i")},
+            {cell_phone: new RegExp(search, "i")},
+            {email: new RegExp(search, "i")},
+        ]};
+        //const query = search? {$text : {$search: new RegExp(search, "i")}} : {};
         Employee.paginate(query, options)
             .then(results => {
                 res.json(results);

@@ -8,13 +8,19 @@ const employeeSchema = new Schema({
     name: String,
     title: String,
     gender: String,
-    start_date: Date,
+    start_date: {
+        type: Date,
+        get: date => date.getDate()
+    },
     office_phone: String,
     cell_phone: String,
     email: String,
     avatar: String,
     manager: ObjectId,
-    direct_report: Number
+    direct_report: {
+        type: Number,
+        default: 0
+    }
 });
 
 employeeSchema.index({name: "text", title: "text", email: "text", manager: "text"});
