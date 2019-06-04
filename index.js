@@ -4,6 +4,7 @@ const express = require('express');
 const bodyParser = require('body-parser');
 const mongoose = require('mongoose');
 const uniqid = require('uniqid');
+const rimraf = require('rimraf');
 
 const Builder = require('./src/buildDB');
 const Employee = require('./src/employee')
@@ -102,21 +103,22 @@ router.use(bodyParser.json({ limit: "50mb" }));
 
 router.route("/employees?")
     .get((req, res) => {
-        const { search, field, sort, page } = req.query;
+        const { search, manager, dr, field, sort, page } = req.query;
         const options = {
             sort: {
                 [field]: sort
             },
             page: page ? +page : 1,
             populate: {
-                path: "manager", 
+                path: "manager",
                 select: "name",
                 options: {
                     retainNullValues: true
                 }
             }
         };
-        const query = {
+        //choose which query to use
+        const searchQuery = {
             $or: [
                 { name: new RegExp(search, "i") },
                 { title: new RegExp(search, "i") },
@@ -125,7 +127,14 @@ router.route("/employees?")
                 { email: new RegExp(search, "i") },
             ]
         };
-        //const query = search? {$text : {$search: new RegExp(search, "i")}} : {};
+        const managerQuery = {
+            _id: manager,
+        };
+        const drQuery = {
+            manager: dr,
+        }
+        const query = manager ? managerQuery : (dr ? drQuery : searchQuery);
+
         Employee.paginate(query, options)
             .then(results => {
                 res.json(results);
@@ -153,7 +162,7 @@ router.route("/employees")
         //extract local image information
         const regex = /^data:image\/\w+\;base64,/ig;
         const extension = avatar.match(/\w+(?=\;)/)[0];
-        console.log("extension: ", extension);
+        //console.log("extension: ", extension);
         let base64Data = "";
         if (avatar) {
             base64Data = avatar.replace(regex, "");
@@ -169,7 +178,7 @@ router.route("/employees")
 
         employee.save()
             .then((result) => {
-                console.log("save new employee result: ", result);
+                //console.log("save new employee result: ", result);
                 return new Promise((resolve, reject) => {
                     fs.mkdirSync(path.join(__dirname, `./static/${id}`));
                     fs.writeFile(filename, base64Data, (avatar ? "base64" : null), (err) => {
@@ -182,7 +191,7 @@ router.route("/employees")
                 });
             })
             .then(() => {
-                console.log("writefile result: ");
+                //console.log("writefile result: ");
                 const { manager } = req.body;
                 if (manager) {
                     Employee.findById(manager, (err, result) => {
@@ -202,27 +211,22 @@ router.route("/employees")
                 }
             })
             .catch((err) => {
-                console.log(err);
+                //console.log(err);
                 res.status(500).json(err);
             });
     });
 
-router.route("/empolyees/:uid")
+router.route("/employees/:uid")
     .get((req, res) => {
-        Employee.findById(req.params.uid, (err, result) => {
-            if (!err) {
-                res.json(result);
-            } else {
-                res.json(err);
+        Employee.findById(req.params.uid).populate(
+            {
+                path: "manager",
+                select: "name",
+                options: {
+                    retainNullValues: true
+                }
             }
-        })
-    });
-
-router.route("/search?")
-    .get((req, res) => {
-        const { text } = req.query;
-        const query = text ? { name: new RegExp(text, "i") } : "";
-        Employee.find(query, (err, result) => {
+        ).exec((err, result) => {
             if (!err) {
                 res.json(result);
             } else {
@@ -230,6 +234,162 @@ router.route("/search?")
             }
         })
     })
+    .delete((req, res) => {
+        const { uid } = req.params;
+        new Promise((resolve, reject) => {
+            Employee.findById(uid, async (err, result) => {
+                if (err) reject(err);
+                else {
+                    const manager = result.manager ? (await Employee.findById(result.manager).exec()) : null;
+                    let dr = await Employee.find({ manager: result._id }).exec();
+                    if (manager) {
+                        dr = dr.map(emp => {
+                            emp.manager = manager._id;
+                            return emp;
+                        });
+                        manager.direct_report = manager.direct_report - 1 + dr.length;
+                        await manager.save();
+                    } else {
+                        dr = dr.map(emp => {
+                            emp.manager = undefined;
+                            return emp;
+                        });
+                    }
+                    for (let emp of dr) await emp.save();
+                    resolve(result);
+                }
+            });
+        })
+            .then(result => {
+                return new Promise((resolve, reject) => {
+                    Employee.findByIdAndDelete(result._id, (err, emp) => {
+                        if (!err) {
+                            resolve(emp);
+                        } else {
+                            reject(err);
+                        }
+                    });
+                });
+            })
+            .then(result => {
+                //delete corresponding local files in the server
+                const { _id, avatar } = result;
+                const id = avatar.match(/(?<=static\/)\w+/)[0];
+                return new Promise((resolve, reject) => {
+                    rimraf(path.join(__dirname, `./static/${id}`), (err) => {
+                        if (!err) resolve(_id);
+                        else reject(err);
+                    });
+                });
+            })
+            .then(id => res.json({ message: `Employee ${id} is deleted` }))
+            .catch(err => res.status(500).json(err));
+    })
+    .put((req, res) => {
+        Employee.findById(req.params.uid).exec((err, result) => {
+            return new Promise((resolve, reject) => {
+                if (err) reject(err);
+                else {
+                    resolve({ after: req.body, before: result });
+                }
+            })
+                .then((result) => {
+                    //console.log("before update: ", result.before);
+                    //console.log("after update: ", result.after);
+                    const { before, after } = result;
+                    before.name = after.name;
+                    before.title = after.title;
+                    before.gender = after.gender;
+                    before.start_date = after.start_date;
+                    before.office_phone = after.office_phone;
+                    before.cell_phone = after.cell_phone;
+                    before.email = after.email;
+                    //update avatar info
+                    if (before.avatar !== after.avatar) {
+                        //extract local image information
+                        const regex = /^data:image\/\w+\;base64,/ig;
+                        const extension = after.avatar.match(/\w+(?=\;)/)[0];
+                        const base64Data = after.avatar.replace(regex, "");
+                        const id = before.avatar.match(/(?<=static\/)\w+/)[0];
+
+                        before.avatar = `http://localhost:8080/static/${id}/avatar.${extension}`;
+                        const filename = path.join(__dirname, `./static/${id}/avatar.${extension}`);
+                        fs.writeFileSync(filename, base64Data, "base64");
+                    }
+                    //check manager change
+                    return new Promise(async (resolve, reject) => {
+                        const mBefore = before.manager;
+                        const mAfter = after.manager;
+                        if (mBefore) {
+                            const m = await Employee.findById(mBefore).exec();
+                            m.direct_report = m.direct_report - 1;
+                            await m.save();
+                        }
+                        let tmp = mAfter;
+                        if (mAfter) {
+                            while (tmp && tmp + "" !== before._id + "") {
+                                console.log("first " + tmp + " " + typeof tmp+ " " + before._id + " " + typeof before._id);
+                                const m = await Employee.findById(tmp).exec();
+                                tmp = m.manager;
+                                console.log("second " + tmp + " " + before._id);
+                            }
+                            if (!tmp) {
+                                const m = await Employee.findById(mAfter).exec();
+                                m.direct_report = m.direct_report + 1;
+                                await m.save();
+                                before.manager = mAfter;
+                            }
+                        } else {
+                            before.manager = undefined;
+                        }
+                        if (!tmp) {
+                            resolve(before);
+                        } else {
+                            resolve({ warning: "Loop detected." });
+                        }
+                    });
+                })
+                .then(result => {
+                    const { warning } = result;
+                    if (warning) res.status(210).json(result);
+                    else {
+                        result.save((err, saved) => {
+                            if (err) {
+                                console.log(err);
+                                res.status(500).json(err);
+                            }
+                            else res.json({ message: `Employee ${saved._id} updated` });
+                        });
+                    }
+                })
+                .catch(err => {
+                    console.log(err);
+                    res.status(500).json(err)
+                });
+        })
+    });
+
+router.route("/search?")
+    .get((req, res) => {
+        const { text } = req.query;
+        const query = text ? { name: new RegExp(text, "i") } : {};
+        Employee.find(query, (err, result) => {
+            if (!err) {
+                res.json(result);
+            } else {
+                res.json(err);
+            }
+        })
+    });
+
+router.route("/test")
+    .get((req, res) => {
+        Employee.findById(undefined, (err, result) => {
+            if (!err) {
+                res.json(result);
+            } else res.status(500).json(err);
+        });
+    });
 
 app.use("/api", router);
 
